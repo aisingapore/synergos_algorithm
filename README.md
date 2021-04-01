@@ -1,1 +1,3 @@
-# Algorithmic component for the Synergos network
+# Synergos Algorithm
+
+Algorithmic component for the Synergos network
