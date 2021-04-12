@@ -17,11 +17,9 @@ import syft as sy
 import torch as th
 
 # Custom
+from .config import seed_everything
 from synalgo import algorithms
-from synalgo.config import seed_everything
-from synalgo.arguments import Arguments
-from synalgo.early_stopping import EarlyStopping
-from synalgo.model import Model
+from synalgo.interfaces import Arguments, EarlyStopping, Model
 
 ##################
 # Configurations #
@@ -287,7 +285,7 @@ class FederatedLearning:
         train_loader: sy.FederatedDataLoader, 
         eval_loader: sy.FederatedDataLoader, 
         test_loader: sy.FederatedDataLoader
-    ):
+    ) -> algorithms.BaseAlgorithm:
         """ Uses specified environment parameters to initialise an algorithm
             object for subsequent use in training and inference.
 

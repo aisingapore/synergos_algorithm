@@ -8,6 +8,7 @@
 import asyncio
 import copy
 import json
+import logging
 import os
 from collections import OrderedDict
 from logging import NOTSET
@@ -34,16 +35,14 @@ from syft.workers.websocket_client import WebsocketClientWorker
 from tqdm import tqdm
 
 # Custom
-from synalgo.config import seed_everything
-from synalgo.arguments import Arguments
-from synalgo.early_stopping import EarlyStopping
-from synalgo.model import Model
-from synalgo.algorithms.abstract import AbstractAlgorithm
+from .abstract import AbstractAlgorithm
+from synalgo.interfaces import Arguments, EarlyStopping, Model
 
 ##################
 # Configurations #
 ##################
 
+SOURCE_FILE = os.path.abspath(__file__)
 
 ##################################################
 # Federated Algorithm Base Class - BaseAlgorithm #
@@ -444,7 +443,7 @@ class BaseAlgorithm(AbstractAlgorithm):
 
             logging.log(
                 level=NOTSET,
-                event="Data & labels tracked.",
+                msg="Data & labels tracked.",
                 data=data,
                 labels=labels,
                 ID_path=SOURCE_FILE,
@@ -726,7 +725,7 @@ class BaseAlgorithm(AbstractAlgorithm):
             """ 
             logging.log(
                 level=NOTSET,
-                event="Packet tracked.",
+                msg="Packet tracked.",
                 packet=packet,
                 ID_path=SOURCE_FILE,
                 ID_function=evaluate_worker.__name__
@@ -736,7 +735,7 @@ class BaseAlgorithm(AbstractAlgorithm):
 
             logging.log(
                 level=NOTSET,
-                event="Data & labels tracked.",
+                msg="Data & labels tracked.",
                 data=data,
                 labels=labels,
                 ID_path=SOURCE_FILE,

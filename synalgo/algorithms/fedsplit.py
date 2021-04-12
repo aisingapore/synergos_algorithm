@@ -12,10 +12,8 @@ import syft as sy
 from syft.workers.websocket_client import WebsocketClientWorker
 
 # Custom
-from synalgo.arguments import Arguments
-from synalgo.early_stopping import EarlyStopping
-from synalgo.model import Model
-from synalgo.algorithms.base import BaseAlgorithm
+from .base import BaseAlgorithm
+from synalgo.interfaces import Arguments, EarlyStopping, Model
 
 
 ##################

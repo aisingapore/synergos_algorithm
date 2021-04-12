@@ -48,7 +48,7 @@ setup(
     keywords="synergos horizontal vertical federated learning algorithm",
     url="https://gitlab.int.aisingapore.org/aims/federatedlearning/synergos_algorithm",
     license="MIT",
-    packages=["synalgo"],
+    packages=["synalgo", "synalgo.algorithms", "synalgo.interfaces"],
     python_requires = ">=3.7",
     install_requires=read_requirements("requirements.txt"),
     include_package_data=True,

@@ -23,10 +23,8 @@ from syft.workers.websocket_client import WebsocketClientWorker
 from tqdm import tqdm
 
 # Custom
-from synalgo.arguments import Arguments
-from synalgo.early_stopping import EarlyStopping
-from synalgo.model import Model
-from synalgo.algorithms.base import BaseAlgorithm
+from .base import BaseAlgorithm
+from synalgo.interfaces import Arguments, EarlyStopping, Model
 
 ##################
 # Configurations #
