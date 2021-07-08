@@ -1104,7 +1104,6 @@ class BaseAlgorithm(AbstractAlgorithm):
 
         return all_combined_outputs, avg_loss
 
-
     ##################
     # Core Functions #
     ##################
