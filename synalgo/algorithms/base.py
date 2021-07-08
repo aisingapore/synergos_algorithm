@@ -1102,8 +1102,8 @@ class BaseAlgorithm(AbstractAlgorithm):
         finally:
             loop.close()
 
-        logging.warn(f"---> all_combined_outputs: {all_combined_outputs.keys()}")
         return all_combined_outputs, avg_loss
+
 
     ##################
     # Core Functions #

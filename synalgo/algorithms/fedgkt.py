@@ -11,6 +11,7 @@ from collections import OrderedDict
 import logging
 import copy
 from pathlib import Path
+from synergos_algorithm.synalgo.custom import CustomFederatedDataloader
 from typing import Tuple, List, Dict, Union
 import os
 
@@ -189,8 +190,27 @@ class WorkerModel(nn.Module):
         for i, (layer_name, layer) in enumerate(list(structure.items())[:L]):
             list_layers.append((str(layer_name), layer))
 
+        ###########################
+        # Implementation Footnote #
+        ###########################
+
+        # [Cause]
+        # In FedGKT, the parameter `L` defines the layer partition to split the
+        # declared architecture into local and server models. However, there is
+        # a need to detect the output tensor's shape of the local model, since
+        # it is required for input into the server model.
+
+        # [Problems]
+        # Difficult to generalize to different dataset types (eg. tabular data
+        # has different dimensionality as compared to an image dataset, and so
+        # each layer will behave differently
+
+        # [Solution]
+        # Make sure that reference model is switched to evaluation mode
+
         params = OrderedDict(list_layers)
         self.client_feature_extractor = nn.Sequential(params)
+        self.client_feature_extractor.eval()
         
         # Get the shape of the data by running through client_feature_extractor
         # in order to determine the no. of in_features for the final output layer
@@ -209,6 +229,7 @@ class WorkerModel(nn.Module):
         logging.debug(f'client_output_in_features: {client_output_in_features}')
         self.client_output = nn.Linear(client_output_in_features, client_output_out_features)
         
+
     def forward(self, x):
         x = self.client_feature_extractor(x)
         extracted_feature = x
@@ -270,6 +291,7 @@ class ServerModel(nn.Module):
         logging.debug(f"params_server: {params_server}")
         self.server_feature_extractor = nn.Sequential(params_server)
        
+
     def forward(self, x):
         x = self.server_feature_extractor(x)
         return x
@@ -543,6 +565,7 @@ class FedGKT(BaseAlgorithm):
 
         return SurrogateCriterion
 
+
     # @staticmethod
     def parse_layers(self, model):
         model_layers = OrderedDict()
@@ -645,8 +668,6 @@ class FedGKT(BaseAlgorithm):
                 logging.debug(f"labels shape: {labels.shape}")
                 # loss = nn.CrossEntropyLoss()(outputs, labels)
                 
-
-
             self.local_models[worker.id] = self.local_models[worker.id].get()
             self.server_model = self.server_model.get() # if no get, will throw error?
 
@@ -932,6 +953,7 @@ class FedGKT(BaseAlgorithm):
 
         return all_combined_outputs, avg_loss
 
+
     # Helper function to get computation shape
     def shape_after_alignment(self):
         """ Get the shape after alignment so the final output layer of the
@@ -947,6 +969,7 @@ class FedGKT(BaseAlgorithm):
             break
         return shape
     
+
     def initialise(self):
         model_structure = self.global_model
         shape = self.shape_after_alignment()
@@ -1146,6 +1169,7 @@ class FedGKT(BaseAlgorithm):
 
         return self.server_model, self.local_models #, server_model
 
+
     def generate_local_models(self, model_structure, L, shape) -> Dict[WebsocketClientWorker, sy.Plan]:
         """ Abstracts the generation of local models in a federated learning
             context. <-- insert your fedgkt local model definitions here -->
@@ -1170,6 +1194,7 @@ class FedGKT(BaseAlgorithm):
 
         return {w: copy.deepcopy(worker_model) for w in self.workers}
 
+
     def generate_local_model(self, model_structure, L, shape):
         """ Abstracts the generation of local models in a federated learning
             context. <-- insert your fedgkt local model definitions here -->
@@ -1193,6 +1218,7 @@ class FedGKT(BaseAlgorithm):
         logging.debug(f"Worker_model: {worker_model}")
 
         return copy.deepcopy(worker_model) 
+
 
     def generate_server_model(self, model_structure, L):
         """ Generation of the server model in a federated learning
@@ -1356,7 +1382,6 @@ class FedGKT(BaseAlgorithm):
             assert models[worker] is curr_local_model
             assert optimizers[worker] is curr_optimizer
             assert criterions[worker] is curr_criterion
-
 
         async def train_batch(batch, idx, server_logits_dict): # need batch_idx for the specific worker
             """ Asynchronously train all workers on their respective 

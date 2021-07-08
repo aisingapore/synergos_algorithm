@@ -18,6 +18,7 @@ import torch as th
 
 # Custom
 from .config import seed_everything
+from .custom import CustomFederatedDataloader
 from synalgo import algorithms
 from synalgo.interfaces import Arguments, EarlyStopping, Model
 
@@ -170,7 +171,7 @@ class FederatedLearning:
         train_datasets = convert_to_datasets("#train")
         eval_datasets = convert_to_datasets("#evaluate")
         test_datasets = convert_to_datasets("#predict")
-        
+
         return train_datasets, eval_datasets, test_datasets
     
 
@@ -232,17 +233,39 @@ class FederatedLearning:
             """
             federated_dataset = sy.FederatedDataset(dataset)
 
-            federated_data_loader = sy.FederatedDataLoader(
+            final_batch_size = (
+                self.arguments.batch_size 
+                if self.arguments.batch_size 
+                else len(federated_dataset)
+            )
+
+            ###########################
+            # Implementation Footnote #
+            ###########################
+
+            # [Causes]
+            # PySyft's federated dataloader is flawed, since it automatically
+            # clips off residual batches of datasets in accordance to the least
+            # no. of batches available across all participants
+
+            # [Problems]
+            # This causes a huge loss of training/inference data, especially
+            # prevalent when dataset sizes between different parties are highly
+            # disparate (eg. 3 batches vs 21 batches --> Only 3 batches used!) 
+
+            # [Solution]
+            # Hijack the FederatedDataloader class and modify its implementation.
+            # Specifically, the CustomFederatedDataloader MUST fulfil:
+            # 1) drop_last = False 
+            #    (i.e. all incomplete batches are maintained)
+            # 2) iter_per_worker = True 
+            #    (i.e. batches are stratified by workers. This is for LVL 1A 
+            #     parallelization)
+
+            federated_data_loader = CustomFederatedDataloader(
                 federated_dataset, 
-                batch_size=(
-                    self.arguments.batch_size 
-                    if self.arguments.batch_size 
-                    else len(federated_dataset)
-                ), 
-                shuffle=shuffle,
-                iter_per_worker=True,   # for LVL 1A parallelization
-                #iter_per_worker=False,  # for LVL 1B parallelization
-                **kwargs
+                batch_size=final_batch_size, 
+                shuffle=shuffle
             )
 
             return federated_data_loader
@@ -361,7 +384,7 @@ class FederatedLearning:
             #     eval_datasets, 
             #     test_datasets
             # )
-            
+
             # Generate federated minibatches via loaders 
             train_loader, eval_loader, test_loader = self.convert_to_FL_batches(
                 train_datasets, 
@@ -369,7 +392,7 @@ class FederatedLearning:
                 test_datasets,
                 shuffle=shuffle
             )
-
+           
             # Initialise specified algorithm
             self.algorithm = self.load_algorithm(
                 train_loader=train_loader,
