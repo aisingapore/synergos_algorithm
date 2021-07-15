@@ -7,6 +7,7 @@
 # Generic/Built-in
 import asyncio
 import copy
+import inspect
 import json
 import logging
 import os
@@ -146,7 +147,7 @@ class BaseAlgorithm(AbstractAlgorithm):
 
         class SurrogateCriterion(self.arguments.criterion):
             """ A wrapper class to augment a specified PyTorch criterion to 
-                suppport FedProx 
+                suppport level 2 algorithm(s) - FedProx & variants 
             
             Args:
                 mu (float): Regularisation term for gamma-inexact minimizer
@@ -412,6 +413,21 @@ class BaseAlgorithm(AbstractAlgorithm):
             Note: All objects involved in this set of operations have
                 already been distributed to their respective workers
 
+            Parallelization is done across a dataloader of this structure:
+            
+            [
+                # Batch 1
+                {
+                    worker_1: (data_ptr, label_ptr),
+                    worker_2: (data_ptr, label_ptr),
+                    ...
+                },
+
+                # Batch 2,
+                # Batch 3,
+                ...
+            ]
+
         Args:
             datasets   (dict(DataLoader)): Distributed training datasets
             models     (dict(nn.Module)): Local models
@@ -573,8 +589,32 @@ class BaseAlgorithm(AbstractAlgorithm):
                     
                 # else, perform learning rate decay
                 else:
-                    curr_scheduler.step()
 
+                    ###########################
+                    # Implementation Footnote #
+                    ###########################
+
+                    # [Causes]
+                    # Any learning rate scheduler with "plateau" 
+                    # (eg. "ReduceLROnPlateau") requires 'self.metric' to be 
+                    # passed as a parameter in '.step(...)'
+
+                    # [Problems]
+                    # Without this parameter, the following error will be raised:
+                    # "TypeError: step() missing 1 required positional argument: 'metrics'"
+                    
+                    # [Solution]
+                    # Check parameters of 'schedueler.step()'. Try if scheduler 
+                    # is affected, if scheduler is not compatible, return to 
+                    # default call.
+
+                    step_args = list(inspect.signature(curr_scheduler.step).parameters)
+
+                    if 'metrics' in step_args:
+                        curr_scheduler.step(final_batch_loss)
+                    else:
+                        curr_scheduler.step()
+                    
             assert schedulers[worker] is curr_scheduler
             assert stoppers[worker] is curr_stopper 
 
@@ -604,6 +644,8 @@ class BaseAlgorithm(AbstractAlgorithm):
                 ID_path=SOURCE_FILE,
                 ID_function=train_datasets.__name__
             )
+
+        # computer --> train_dataset --> train_batch --> train_worker
 
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -665,6 +707,10 @@ class BaseAlgorithm(AbstractAlgorithm):
         Returns:
             Aggregated parameters (OrderedDict)
         """
+        global_model.eval()
+        for _, local_model in models.items():
+            local_model.eval()
+
         param_types = global_model.state_dict().keys()
         model_states = {w: m.state_dict() for w,m in models.items()}
 
@@ -694,18 +740,43 @@ class BaseAlgorithm(AbstractAlgorithm):
 
             layer_shape = tuple(global_model.state_dict()[p_type].shape)
 
-            aggregated_params[p_type] = th.stack(
-                param_states,
-                dim=0
-            ).sum(dim=0).view(*layer_shape)
+            # logging.warning(f"{p_type} - Layer shape: {layer_shape}\n{global_model.state_dict()[p_type]}")
+
+            if layer_shape:
+
+                aggregated_params[p_type] = th.stack(
+                    param_states,
+                    dim=0
+                ).sum(dim=0).view(*layer_shape) 
 
         return aggregated_params
  
 
-    def perform_FL_evaluation(self, datasets, workers=[], is_shared=True, **kwargs): 
+    def perform_FL_evaluation(
+        self, 
+        datasets: Tuple[sy.PointerTensor], 
+        workers: List[str] = [], 
+        is_shared: bool = True, 
+        **kwargs
+    ): 
         """ Obtains predictions given a validation/test dataset upon 
             a specified trained global model.
+
+            Parallelization is done across a dataloader of this structure:
             
+            [
+                # Batch 1
+                {
+                    worker_1: (data_ptr, label_ptr),
+                    worker_2: (data_ptr, label_ptr),
+                    ...
+                },
+
+                # Batch 2,
+                # Batch 3,
+                ...
+            ]
+
         Args:
             datasets (tuple(th.Tensor)): A validation/test dataset
             workers (list(str)): Filter to select specific workers to infer on
@@ -973,6 +1044,8 @@ class BaseAlgorithm(AbstractAlgorithm):
             batch_evaluations = {}
             batch_losses = []
 
+            # logging.warning(f">>> batch: {batch}, type: {type(batch)}")
+
             # If multiple prediction sets have been declared across all workers,
             # batch will be a dictionary i.e. {<worker_1>: (data, labels), ...}
             if isinstance(batch, dict):
@@ -1001,6 +1074,9 @@ class BaseAlgorithm(AbstractAlgorithm):
                 evaluated_worker_batch, loss = await evaluate_worker(packet)
                 batch_evaluations.update(evaluated_worker_batch)
                 batch_losses.append(loss)
+
+            # logging.warning(f">>> batch evaluations: {batch_evaluations}")
+            # logging.warning(f">>> batch losses: {batch_losses}")
 
             return batch_evaluations, batch_losses
 
@@ -1077,6 +1153,13 @@ class BaseAlgorithm(AbstractAlgorithm):
                 if relevant_losses 
                 else None
             )
+
+            # for worker, i in all_combined_outputs.items():
+                # for _type, res_collection in i.items():
+                    # logging.warning(f"{worker} - {_type} -> {res_collection} {len(res_collection)}")
+
+            # logging.warning(f">>> all combined outputs: {all_combined_outputs}, avg loss: {avg_loss}")
+
             return all_combined_outputs, avg_loss
 
             ####################################################################
@@ -1340,10 +1423,14 @@ class BaseAlgorithm(AbstractAlgorithm):
         # If no worker filter are specified, evaluate all workers
         workers = [w.id for w in self.workers] if not workers else workers
 
+        # logging.warning(f"--> metas: {metas}, workers: {workers}")
+
         # Evaluate global model using datasets conforming to specified metas
         inferences = {}
         losses = {}
         for meta, dataset in DATA_MAP.items():
+
+            # logging.warning(f"meta: {meta}, dataset: {dataset}")
 
             if meta in metas:
 

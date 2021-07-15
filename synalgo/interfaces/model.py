@@ -48,6 +48,24 @@ class Model(nn.Module):
                                 'LSTM', 'LSTMCell',
                                 'GRU', 'GRUCell']
         
+        ###########################
+        # Implementation Footnote #
+        ###########################
+
+        # [Causes]
+        # Any learning rate scheduler with "plateau" (eg. "ReduceLROnPlateau") 
+        # requires its model to have the attribute 'self.metric'
+
+        # [Problems]
+        # Without this parameter, the following error will be raised:
+        # "TypeError: step() missing 1 required positional argument: 'metrics'"
+        
+        # [Solution]
+        # Specify it by default. It will be available for those layers/functions
+        # who need it, and ignored by those who do not.
+
+        self.metric = 0  # used for learning rate policy 'plateau'
+
         self.layers = OrderedDict()
 
         for layer, params in enumerate(structure):

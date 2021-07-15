@@ -373,7 +373,7 @@ class FedGKT(BaseAlgorithm):
         self.whether_distill_on_the_server = arguments.whether_distill_on_the_server
         self.server_epochs = arguments.server_epochs
         
-        self.criterion_kl = KLLoss(arguments.temperature)
+        self.criterion_kl = KLLoss(temperature=arguments.temperature)
 
         # initialize all workers states to empty
         for worker in workers: # workers list
@@ -566,19 +566,20 @@ class FedGKT(BaseAlgorithm):
         return SurrogateCriterion
 
 
-    # @staticmethod
-    def parse_layers(self, model):
+    def parse_layers(self, model: nn.Module) -> OrderedDict:
         model_layers = OrderedDict()
         for idx, (layer_name, a_func) in enumerate(model.layers.items()):
             curr_layer = getattr(model, layer_name) # model.nnl_2_linear == Linear(...)
             model_layers[layer_name] = curr_layer
             
-            # To ignoring pre-applied activation function when creating layers and activations
-            # This is to make slicing of L layers more intuitive during the creation of a global model.
+            # To ignoring pre-applied activation function when creating layers 
+            # and activations. This is to make slicing of L layers more 
+            # intuitive during the creation of a global model.
 
-            # Creation of layers and activations should have its own separate block/dict.
-            # Layers and activations should be called from the torch.nn.modules
-            # The global model structure should be defined in fedgkt format (See above for example on fedgkt model structure).
+            # Creation of layers and activations should have its own separate 
+            # block/dict. Layers and activations should be called from the 
+            # torch.nn.modules. The global model structure should be defined in
+            # fedgkt format (See above for example on fedgkt model structure).
 
             func_name = a_func.__name__
             model_layers[f"{func_name}{idx}"] = a_func
@@ -590,7 +591,13 @@ class FedGKT(BaseAlgorithm):
         return formatted_layers
 
 
-    def perform_FL_evaluation(self, datasets, workers=[], is_shared=True, **kwargs): 
+    def perform_FL_evaluation(
+        self, 
+        datasets: Tuple[sy.PointerTensor], 
+        workers: List[str] = [], 
+        is_shared: bool = True, 
+        **kwargs
+    ): 
         """ Obtains predictions given a validation/test dataset upon 
             a specified trained global model.
             
@@ -955,9 +962,12 @@ class FedGKT(BaseAlgorithm):
 
 
     # Helper function to get computation shape
-    def shape_after_alignment(self):
+    def shape_after_alignment(self) -> Tuple[int]:
         """ Get the shape after alignment so the final output layer of the
             local model can be created automatically. 
+
+        Returns:
+            Template shape (tuple)
         """
         shape = None
         for batch in self.train_loader:
@@ -970,207 +980,12 @@ class FedGKT(BaseAlgorithm):
         return shape
     
 
-    def initialise(self):
-        model_structure = self.global_model
-        shape = self.shape_after_alignment()
-        logging.debug(f"initialise_shape: {shape}")
-        L = self.L
-
-        logging.debug(f"fedgkt model_structure: {model_structure}")
-        logging.debug(f"criterion_params: {self.arguments.criterion_params}")
-
-        local_models = self.generate_local_models(model_structure, L, shape)
-        prev_models = self.generate_local_models(model_structure, L, shape)
-
-        server_model = self.generate_server_model(model_structure, L)
-
-        server_opt = self.arguments.optimizer( 
-                **self.arguments.optimizer_params,
-                params=server_model.parameters()
-        )
-
-        server_criterion = self.build_custom_criterion()(
-                **self.arguments.criterion_params
-            )
-        
-        optimizers = {
-            w: self.arguments.optimizer( 
-                **self.arguments.optimizer_params,
-                params=model.parameters()
-            ) for w, model in local_models.items()
-        }
-
-        schedulers = {
-            w: self.arguments.lr_scheduler(
-                **self.arguments.lr_decay_params,
-                optimizer=optimizer
-            )
-            for w, optimizer in optimizers.items()
-        }
-
-        criterions = {
-            w: self.build_custom_criterion()(
-                **self.arguments.criterion_params
-            ) for w,m in local_models.items()
-        }
-        
-        stoppers = {
-            w: EarlyStopping(
-                **self.arguments.early_stopping_params
-            ) for w,m in local_models.items()
-        }
-
-        return (
-            local_models,
-            prev_models, 
-            optimizers, 
-            schedulers, 
-            criterions,
-            stoppers,
-            server_model,
-            server_opt,
-            server_criterion
-        )
-
-
-    def fit(self):
-        logging.debug("fitting")
-        """ Performs federated training using a pre-specified model as
-            a template, across initialised worker nodes, coordinated by
-            a ttp node.
-            
-        Returns:
-            Trained global model (Model)
-        """
-        ###########################
-        # Implementation Footnote #
-        ###########################
-
-        # However, due to certain PySyft nuances (refer to Part 4, section 1: 
-        # Frame of Reference) there is a need to choose a conceptual 
-        # representation of the overall architecture. Here, the node agnostic 
-        # variant is implemented. Model is stored in the server -> Client 
-        # (i.e. 'Me') does not interact with it
-        
-        # Note: If MPC is requested, global model itself cannot be shared, only 
-        # its copies are shared. This is due to restrictions in PointerTensor 
-        # mechanics.
-
-        # apply to server loss
-        global_val_stopper = EarlyStopping(**self.arguments.early_stopping_params)
-
-        rounds = 0
-        pbar = tqdm(total=self.arguments.rounds, desc='Rounds', leave=True)
-        while rounds < self.arguments.rounds:
-
-            # logging.debug(f"Current global model:\n {self.global_model.state_dict()}")
-            # logging.debug(f"Global Gradients:\n {list(self.global_model.parameters())[0].grad}")
-
-            (
-                local_models,
-                prev_models, 
-                optimizers, 
-                schedulers, 
-                criterions, 
-                stoppers,
-                server_model,
-                server_opt,
-                server_criterion
-            ) = self.initialise()
-            logging.debug("initialise done")
-
-            # perform_parallel_training: return models, optimizers, schedulers, criterions, stoppers #, server_model, server_opt
-            (retrieved_models, _, _, _, _) = self.perform_parallel_training(
-                datasets=self.train_loader, 
-                models=local_models,
-                cache=prev_models,
-                optimizers=optimizers, 
-                schedulers=schedulers,
-                criterions=criterions, 
-                stoppers=stoppers,
-                rounds=rounds,
-                epochs=self.arguments.epochs,
-                server_model=server_model,
-                server_opt=server_opt,
-                server_criterion=server_criterion
-            )
-
-            # Retrieve all models from their respective workers
-            logging.debug(f"Current server model:\n {server_model.state_dict()}")
-            self.server_model = server_model
-
-            # logging.debug(f"Current global model:\n {self.global_model.state_dict()}")
-            # aggregated_params = self.calculate_global_params(
-            #     self.global_model, 
-            #     retrieved_models, 
-            #     self.train_loader
-            # )
-
-    #         # # Update weights with aggregated parameters 
-    #         # self.global_model.load_state_dict(aggregated_params)
-    #         # logging.debug(f"New global model:\n {self.global_model.state_dict()}")
-
-            # Local losses for worker
-            final_local_losses = {
-                w.id: c._cache[-1].get()
-                for w,c in criterions.items()
-            }
-
-            logging.debug(f'final_local_losses: {final_local_losses}')
-
-            # Store local losses for analysis
-            for w_id, loss in final_local_losses.items():
-                local_loss_archive = self.loss_history['local'].get(w_id, {})
-                local_loss_archive.update({rounds: loss.item()})
-                self.loss_history['local'][w_id] = local_loss_archive
-
-            # global_train_loss = th.mean(
-            #     th.stack(list(final_local_losses.values())),
-            #     dim=0
-            # )
-
-            global_train_loss = self.global_train_loss
-            
-            # Validate the global model
-            _, evaluation_losses = self.evaluate(metas=['evaluate'])
-            global_val_loss = evaluation_losses['evaluate']
-
-            logging.debug(f"global_val_loss: {global_val_loss}")
-
-
-            # # Store global losses for analysis
-            global_loss_archive = self.loss_history['global']
-            global_train_losses = global_loss_archive.get('train', {})
-            global_train_losses.update({rounds: global_train_loss.item()})
-            global_val_losses = global_loss_archive.get('evaluate', {})
-            global_val_losses.update({rounds: global_val_loss.item()})
-            self.loss_history['global'] = {
-                'train': global_train_losses,
-                'evaluate': global_val_losses
-            }
-
-            # If server model is deemed to have stagnated, stop training
-            global_val_stopper(global_val_loss, self.server_model)
-            if global_val_stopper.early_stop:
-                logging.info("Global model has stagnated. Training round terminated!\n")
-                break
-
-            rounds += 1
-            pbar.update(1)
-        
-        pbar.close()
-
-    #     logging.debug(f"Objects in TTP: {self.crypto_provider}, {len(self.crypto_provider._objects)}")
-    #     logging.debug(f"Objects in sy.local_worker: {sy.local_worker}, {len(sy.local_worker._objects)}")
-        logging.debug(f"server logits size: {len(server_logits_dict)}")
-        logging.debug(f"logits size: {len(logits_dict)}")
-        logging.debug(f"labels size: {len(labels_dict)}")
-        logging.debug(f"ef size: {len(extracted_feature_dict)}")
-
-        return self.server_model, self.local_models #, server_model
-
-
-    def generate_local_models(self, model_structure, L, shape) -> Dict[WebsocketClientWorker, sy.Plan]:
+    def generate_local_models(
+        self, 
+        model_structure: nn.Module, 
+        L: int, 
+        shape: Tuple[int]
+    ) -> Dict[WebsocketClientWorker, nn.Module]:
         """ Abstracts the generation of local models in a federated learning
             context. <-- insert your fedgkt local model definitions here -->
 
@@ -1179,11 +994,15 @@ class FedGKT(BaseAlgorithm):
             retrieval have to be handled in the same functional context, 
             otherwise PySyft will have a hard time cleaning up residual tensors.
 
+        Args:
+            model_structure (dict): The original architecture for selected model
+            L (int): Index to slice on (i.e. slice from L layer onwards)
+            shape (tuple): Template shape of input tensor for layer alignment
         Returns:
             Distributed context-specific local models (dict(str, Model))
         """
-        # <-- Step 1: Slice out self.L layers to create a single local model first -->
-        # <-- Step 2: Make copy of local models for N participants -->
+        # Step 1: Slice out self.L layers to create a single local model first
+        # Step 2: Make copy of local models for N participants
 
         # create a model using Synergos model_structure format
         logging.debug(f"Generating local models..")
@@ -1195,7 +1014,12 @@ class FedGKT(BaseAlgorithm):
         return {w: copy.deepcopy(worker_model) for w in self.workers}
 
 
-    def generate_local_model(self, model_structure, L, shape):
+    def generate_local_model(
+        self, 
+        model_structure: nn.Module, 
+        L: int, 
+        shape: Tuple[int]
+    ):
         """ Abstracts the generation of local models in a federated learning
             context. <-- insert your fedgkt local model definitions here -->
 
@@ -1204,11 +1028,15 @@ class FedGKT(BaseAlgorithm):
             retrieval have to be handled in the same functional context, 
             otherwise PySyft will have a hard time cleaning up residual tensors.
 
+        Args:
+            model_structure (dict): The original architecture for selected model
+            L (int): Index to slice on (i.e. slice from L layer onwards)
+            shape (tuple): Template shape of input tensor for layer alignment
         Returns:
             Distributed context-specific local models (dict(str, Model))
         """
-        # <-- Step 1: Slice out self.L layers to create a single local model first -->
-        # <-- Step 2: Make copy of local models for N participants -->
+        # Step 1: Slice out self.L layers to create a single local model first
+        # Step 2: Make copy of local models for N participants
 
         # create a model using Synergos model_structure format
         logging.debug(f"Generating one local model..")
@@ -1220,13 +1048,15 @@ class FedGKT(BaseAlgorithm):
         return copy.deepcopy(worker_model) 
 
 
-    def generate_server_model(self, model_structure, L):
+    def generate_server_model(self, model_structure: dict, L: int) -> nn.Module:
         """ Generation of the server model in a federated learning
             context.
         
         Args:
-            model_structure: The original model structure
-            L: sliced from L layer onwards
+            model_structure (dict): The original architecture for selected model
+            L (int): Index to slice on (i.e. slice from L layer onwards)
+        Returns:
+            Server model (nn.Module)
         """
         # This model is always global so no need to copy.
         logging.debug(f"Generating server model..")
@@ -1248,7 +1078,7 @@ class FedGKT(BaseAlgorithm):
         stoppers: dict, 
         rounds: int,
         epochs: int,
-        server_model,
+        server_model: nn.Module,
         server_opt,
         server_criterion
     ):
@@ -1279,6 +1109,7 @@ class FedGKT(BaseAlgorithm):
         #     my_dict[worker] = batch_list
 
         WORKERS_STOPPED = []
+
         async def train_worker(packet):
             """ Train a worker on its single batch, and does an in-place 
                 updates for its local model, optimizer & criterion 
@@ -1332,8 +1163,7 @@ class FedGKT(BaseAlgorithm):
                 logging.debug(f"Output size: {outputs.shape}")
                 logging.debug(f"Augmented labels size: {labels.shape}")
 
-                local_loss = curr_criterion( # CE Loss
-                    outputs=outputs, labels=labels)
+                local_loss = curr_criterion(outputs=outputs, labels=labels) # CE Loss
                 # local_loss = curr_criterion(outputs, labels)
                 
                 # Check if global variable server_logits_dict is empty
@@ -1431,14 +1261,28 @@ class FedGKT(BaseAlgorithm):
                     
                 # else, perform learning rate decay
                 else:
-                    ## empty arguments {} when using _retrieve_args on curr_scheduler.step
-                    # step_args = self.arguments._retrieve_args(curr_scheduler.step)
+
+                    ###########################
+                    # Implementation Footnote #
+                    ###########################
+
+                    # [Causes]
+                    # Any learning rate scheduler with "plateau" 
+                    # (eg. "ReduceLROnPlateau") requires 'self.metric' to be 
+                    # passed as a parameter in '.step(...)'
+
+                    # [Problems]
+                    # Without this parameter, the following error will be raised:
+                    # "TypeError: step() missing 1 required positional argument: 'metrics'"
+                    
+                    # [Solution]
+                    # Check parameters of 'schedueler.step()'. Try if scheduler 
+                    # is affected, if scheduler is not compatible, return to 
+                    # default call.
+
                     step_args = list(inspect.signature(curr_scheduler.step).parameters)
-                    logging.debug(f"step_args: {step_args}")
-                    logging.debug(f"curr_scheduler: {curr_scheduler}")
+
                     if 'metrics' in step_args:
-                        # e.g. The lrscheduler "ReduceLROnPlateau" requires 
-                        # a metric to be passed in.
                         curr_scheduler.step(final_batch_loss)
                     else:
                         curr_scheduler.step()
@@ -1465,10 +1309,16 @@ class FedGKT(BaseAlgorithm):
             await asyncio.gather(*stagnation_futures)
             logging.debug(f"After stagnation evaluation: Workers stopped: {WORKERS_STOPPED}")
 
-
-        def train_server(whether_distill_on_the_server, server_epochs, 
-                        model_server, server_opt, extracted_feature_dict,
-                        logits_dict, labels_dict, server_criterion):
+        def train_server(
+            whether_distill_on_the_server: bool, 
+            server_epochs: int, 
+            model_server: nn.Module, 
+            server_opt: th.optim, 
+            extracted_feature_dict: dict,
+            logits_dict: dict, 
+            labels_dict: dict, 
+            server_criterion: th.nn
+        ):
             """ Train your server model using embeddings obtained from local workers
                 
             Args:
@@ -1598,65 +1448,189 @@ class FedGKT(BaseAlgorithm):
 
 
         return models, optimizers, schedulers, criterions, stoppers #, server_model, server_opt
-
-
-    def evaluate(self, metas: List[str] = [],
-             workers: List[str] = []) -> Tuple[Dict[str, Dict[str, th.Tensor]], Dict[str, th.Tensor]]:
-        """ Using the current instance of the global model, performs inference 
-            on pre-specified datasets.
-
-        Args:
-            metas (list(str)): Meta tokens indicating which datasets are to be
-                evaluated. If empty (default), all meta datasets (i.e. training,
-                validation and testing) will be evaluated
-            workers (list(str)): Worker IDs of workers whose datasets are to be
-                evaluated. If empty (default), evaluate all workers' datasets. 
-        Returns:
-            Inferences (dict(worker_id, dict(result_type, th.Tensor)))
-            losses (dict(str, th.Tensor))
-        """
-        logging.debug(f"evaluate func:")
-        DATA_MAP = {
-            'train': self.train_loader,
-            'evaluate': self.eval_loader,
-            'predict': self.test_loader
-        }
-        
-        # If no meta filters are specified, evaluate all datasets 
-        metas = list(DATA_MAP.keys()) if not metas else metas
-
-        # If no worker filter are specified, evaluate all workers
-        workers = [w.id for w in self.workers] if not workers else workers
-
-        # Evaluate global model using datasets conforming to specified metas
-        inferences = {}
-        losses = {}
-
-        for meta, dataset in DATA_MAP.items():
-
-            if meta in metas:
-
-                worker_meta_inference, avg_loss = self.perform_FL_evaluation(
-                    datasets=dataset,
-                    workers=workers,
-                    is_shared=True
-                )
-
-                # inference = worker -> meta -> (y_pred, y_score)
-                for worker_id, meta_result in worker_meta_inference.items():
-
-                    worker_results = inferences.get(worker_id, {})
-                    worker_results[meta] = meta_result
-                    inferences[worker_id] = worker_results
-
-                losses[meta] = avg_loss
-
-        return inferences, losses
-        
+       
 
     ##################
     # Core functions #
     ##################
+
+    def initialise(self):
+        """ Encapsulates all operations required for FedGKT suppport """
+        model_structure = self.global_model
+        shape = self.shape_after_alignment()
+        logging.debug(f"initialise_shape: {shape}")
+        L = self.L
+
+        logging.debug(f"fedgkt model_structure: {model_structure}")
+        logging.debug(f"criterion_params: {self.arguments.criterion_params}")
+
+        local_models = self.generate_local_models(model_structure, L, shape)
+        prev_models = self.generate_local_models(model_structure, L, shape)
+
+        server_model = self.generate_server_model(model_structure, L)
+
+        server_opt = self.arguments.optimizer( 
+                **self.arguments.optimizer_params,
+                params=server_model.parameters()
+        )
+
+        server_criterion = self.build_custom_criterion()(
+                **self.arguments.criterion_params
+            )
+        
+        optimizers = {
+            w: self.arguments.optimizer( 
+                **self.arguments.optimizer_params,
+                params=model.parameters()
+            ) for w, model in local_models.items()
+        }
+
+        schedulers = {
+            w: self.arguments.lr_scheduler(
+                **self.arguments.lr_decay_params,
+                optimizer=optimizer
+            )
+            for w, optimizer in optimizers.items()
+        }
+
+        criterions = {
+            w: self.build_custom_criterion()(
+                **self.arguments.criterion_params
+            ) for w,m in local_models.items()
+        }
+        
+        stoppers = {
+            w: EarlyStopping(
+                **self.arguments.early_stopping_params
+            ) for w,m in local_models.items()
+        }
+
+        return (
+            local_models,
+            prev_models, 
+            optimizers, 
+            schedulers, 
+            criterions,
+            stoppers,
+            server_model,
+            server_opt,
+            server_criterion
+        )
+
+
+    def fit(self):
+        """ Performs federated training using a pre-specified model as
+            a template, across initialised worker nodes, coordinated by
+            a ttp node.
+            
+        Returns:
+            Trained global model (Model)
+        """
+        ###########################
+        # Implementation Footnote #
+        ###########################
+
+        # However, due to certain PySyft nuances (refer to Part 4, section 1: 
+        # Frame of Reference) there is a need to choose a conceptual 
+        # representation of the overall architecture. Here, the node agnostic 
+        # variant is implemented. Model is stored in the server -> Client 
+        # (i.e. 'Me') does not interact with it
+        
+        # Note: If MPC is requested, global model itself cannot be shared, only 
+        # its copies are shared. This is due to restrictions in PointerTensor 
+        # mechanics.
+
+        # apply to server loss
+        global_val_stopper = EarlyStopping(**self.arguments.early_stopping_params)
+
+        rounds = 0
+        pbar = tqdm(total=self.arguments.rounds, desc='Rounds', leave=True)
+        while rounds < self.arguments.rounds:
+
+            (
+                local_models,
+                prev_models, 
+                optimizers, 
+                schedulers, 
+                criterions, 
+                stoppers,
+                server_model,
+                server_opt,
+                server_criterion
+            ) = self.initialise()
+
+            self.perform_parallel_training(
+                datasets=self.train_loader, 
+                models=local_models,
+                cache=prev_models,
+                optimizers=optimizers, 
+                schedulers=schedulers,
+                criterions=criterions, 
+                stoppers=stoppers,
+                rounds=rounds,
+                epochs=self.arguments.epochs,
+                server_model=server_model,
+                server_opt=server_opt,
+                server_criterion=server_criterion
+            )
+
+            # Retrieve all models from their respective workers
+            logging.debug(f"Current server model:\n {server_model.state_dict()}")
+            self.server_model = server_model
+
+            # Local losses for worker
+            final_local_losses = {
+                w.id: c._cache[-1].get()
+                for w,c in criterions.items()
+            }
+
+            logging.debug(f'final_local_losses: {final_local_losses}')
+
+            # Store local losses for analysis
+            for w_id, loss in final_local_losses.items():
+                local_loss_archive = self.loss_history['local'].get(w_id, {})
+                local_loss_archive.update({rounds: loss.item()})
+                self.loss_history['local'][w_id] = local_loss_archive
+
+            global_train_loss = self.global_train_loss
+            
+            # Validate the global model
+            _, evaluation_losses = self.evaluate(metas=['evaluate'])
+            global_val_loss = evaluation_losses['evaluate']
+
+            logging.debug(f"global_val_loss: {global_val_loss}")
+
+            # # Store global losses for analysis
+            global_loss_archive = self.loss_history['global']
+            global_train_losses = global_loss_archive.get('train', {})
+            global_train_losses.update({rounds: global_train_loss.item()})
+            global_val_losses = global_loss_archive.get('evaluate', {})
+            global_val_losses.update({rounds: global_val_loss.item()})
+            self.loss_history['global'] = {
+                'train': global_train_losses,
+                'evaluate': global_val_losses
+            }
+
+            # If server model is deemed to have stagnated, stop training
+            global_val_stopper(global_val_loss, self.server_model)
+            if global_val_stopper.early_stop:
+                logging.info("Global model has stagnated. Training round terminated!\n")
+                break
+
+            rounds += 1
+            pbar.update(1)
+        
+        pbar.close()
+
+    #     logging.debug(f"Objects in TTP: {self.crypto_provider}, {len(self.crypto_provider._objects)}")
+    #     logging.debug(f"Objects in sy.local_worker: {sy.local_worker}, {len(sy.local_worker._objects)}")
+        logging.debug(f"server logits size: {len(server_logits_dict)}")
+        logging.debug(f"logits size: {len(logits_dict)}")
+        logging.debug(f"labels size: {len(labels_dict)}")
+        logging.debug(f"ef size: {len(extracted_feature_dict)}")
+
+        return self.server_model, self.local_models #, server_model
+
 
     def analyse(self):
         """ Calculates contributions of all workers towards the final global 
@@ -1765,7 +1739,6 @@ class FedGKT(BaseAlgorithm):
             )
             # Only states can be saved, since Model is not picklable
             if self.server_model != None:
-                logging.debug(f"server_model_state_dict: {self.server_model.state_dict()}")
                 th.save(self.server_model.state_dict(), server_model_out_path)
             else:
                 server_model_out_path = ""
@@ -1777,15 +1750,6 @@ class FedGKT(BaseAlgorithm):
         out_paths['global']['path'] = save_server_model()
 
         return out_paths
-
-
-    @staticmethod
-    def combine_models(self, server_model, local_model):
-        """
-        """
-        # combined model: local_model + server_model
-        combined_model = None # Fill in yourself
-        return combined_model
 
 
     def restore(
@@ -1879,7 +1843,6 @@ class FedGKT(BaseAlgorithm):
                 round index and the second the epoch index 
                 (i.e. (round_<r_idx>, epoch_<e_idx>))
         """
-        logging.debug(f"restore function in: {archive}")
         for _type, logs in archive.items():
 
             archived_origin = logs['origin']
@@ -1898,12 +1861,16 @@ class FedGKT(BaseAlgorithm):
             logging.debug(f"restore parse global_model: {self.global_model}")
 
             if archived_origin == self.crypto_provider.id:
-                logging.debug(f"server_archive_state: {archived_state}")
-                # Generate server model (nn.Module) using self.global_model as a reference
-                server_model = self.generate_server_model(self.global_model, self.L)
+
+                # Generate server model (nn.Module) using self.global_model as 
+                # a reference template
+                server_model = self.generate_server_model(
+                    model_structure=self.global_model, 
+                    L=self.L
+                )
+
                 # Now that the server model architecture has been initialised,
                 # restore the archived server model's weights
-                logging.debug(f"restored server_model: {server_model}")
                 server_model.load_state_dict(archived_state)
                 self.server_model = server_model
             
@@ -1930,14 +1897,20 @@ class FedGKT(BaseAlgorithm):
                 
                 if self.arguments.is_snn:
                     archived_model = archived_state
+
                 else:
-                    logging.debug(f"local_archive_state: {archived_state}")
+
                     # Need to determine shape by running through the batch
                     # since there is no way to determine the alignment shape
                     shape = self.shape_after_alignment()
-                    logging.debug(f"local_archive_shape: {shape}")
-                    # Generate local model (nn.Module) using self.global_model as a reference
-                    archived_model = self.generate_local_model(self.global_model, self.L, shape)
+
+                    # Generate local model (nn.Module) using self.global_model 
+                    # as a reference template
+                    archived_model = self.generate_local_model(
+                        model_structure=self.global_model, 
+                        L=self.L, 
+                        shape=shape
+                    )
 
                     # Now that the edge model architecture has been initialised,
                     # restore the archived edge model's weights

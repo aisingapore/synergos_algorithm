@@ -443,6 +443,8 @@ class FederatedLearning:
         if not self.is_loaded():
             raise RuntimeError("Grid data has not been aggregated! Call '.load()' first & try again.")
 
+        logging.warning(f"metas: {metas}, workers: {workers}")
+
         # Run algorithm for evaluation
         inferences, losses = self.algorithm.evaluate(
             metas=metas,
