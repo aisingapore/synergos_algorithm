@@ -740,8 +740,6 @@ class BaseAlgorithm(AbstractAlgorithm):
 
             layer_shape = tuple(global_model.state_dict()[p_type].shape)
 
-            # logging.warning(f"{p_type} - Layer shape: {layer_shape}\n{global_model.state_dict()[p_type]}")
-
             if layer_shape:
 
                 aggregated_params[p_type] = th.stack(
@@ -1044,8 +1042,6 @@ class BaseAlgorithm(AbstractAlgorithm):
             batch_evaluations = {}
             batch_losses = []
 
-            # logging.warning(f">>> batch: {batch}, type: {type(batch)}")
-
             # If multiple prediction sets have been declared across all workers,
             # batch will be a dictionary i.e. {<worker_1>: (data, labels), ...}
             if isinstance(batch, dict):
@@ -1075,8 +1071,8 @@ class BaseAlgorithm(AbstractAlgorithm):
                 batch_evaluations.update(evaluated_worker_batch)
                 batch_losses.append(loss)
 
-            # logging.warning(f">>> batch evaluations: {batch_evaluations}")
-            # logging.warning(f">>> batch losses: {batch_losses}")
+            logging.debug(f"batch evaluations: {batch_evaluations}")
+            logging.debug(f"batch losses: {batch_losses}")
 
             return batch_evaluations, batch_losses
 
@@ -1154,11 +1150,9 @@ class BaseAlgorithm(AbstractAlgorithm):
                 else None
             )
 
-            # for worker, i in all_combined_outputs.items():
-                # for _type, res_collection in i.items():
-                    # logging.warning(f"{worker} - {_type} -> {res_collection} {len(res_collection)}")
-
-            # logging.warning(f">>> all combined outputs: {all_combined_outputs}, avg loss: {avg_loss}")
+            for worker, i in all_combined_outputs.items():
+                for _type, res_collection in i.items():
+                    logging.debug(f"{worker} - {_type} -> {res_collection} {len(res_collection)}")
 
             return all_combined_outputs, avg_loss
 
@@ -1423,14 +1417,14 @@ class BaseAlgorithm(AbstractAlgorithm):
         # If no worker filter are specified, evaluate all workers
         workers = [w.id for w in self.workers] if not workers else workers
 
-        # logging.warning(f"--> metas: {metas}, workers: {workers}")
+        logging.debug(f"Metas: {metas}, Workers: {workers}")
 
         # Evaluate global model using datasets conforming to specified metas
         inferences = {}
         losses = {}
         for meta, dataset in DATA_MAP.items():
 
-            # logging.warning(f"meta: {meta}, dataset: {dataset}")
+            logging.debug(f"Metas: {metas}, Meta: {meta}, Dataset: {dataset}")
 
             if meta in metas:
 
@@ -1448,7 +1442,7 @@ class BaseAlgorithm(AbstractAlgorithm):
                     inferences[worker_id] = worker_results
 
                 losses[meta] = avg_loss
-        
+
         return inferences, losses
 
 
