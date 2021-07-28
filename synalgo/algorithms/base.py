@@ -7,10 +7,12 @@
 # Generic/Built-in
 import asyncio
 import copy
+import gc
 import inspect
 import json
 import logging
 import os
+import re
 from collections import OrderedDict
 from logging import NOTSET
 from multiprocessing import Manager
@@ -101,6 +103,7 @@ class BaseAlgorithm(AbstractAlgorithm):
         self.workers = workers
 
         # Data attributes
+        self.crypto_objs = {k:v for k,v in self.crypto_provider._objects.items()} # cache original pointers
         self.arguments = arguments
         self.train_loader = train_loader
         self.eval_loader = eval_loader
@@ -486,8 +489,14 @@ class BaseAlgorithm(AbstractAlgorithm):
 
                 # curr_global_model = self.secret_share(curr_global_model)
                 # curr_local_model = self.secret_share(curr_local_model)
-                curr_global_model = curr_global_model.send(worker)
-                curr_local_model = curr_local_model.send(worker)
+                curr_global_model = curr_global_model.send(
+                    worker,
+                    # garbage_collect_data=True     
+                )
+                curr_local_model = curr_local_model.send(
+                    worker,
+                    # garbage_collect_data=True  
+                )
 
                 logging.debug(
                     f"Location of global model: {curr_global_model.location}", 
@@ -832,8 +841,14 @@ class BaseAlgorithm(AbstractAlgorithm):
             if workers and (worker.id not in workers):
                 return {}, None
 
-            self.global_model = self.global_model.send(worker)
-            self.local_models[worker.id] = self.local_models[worker.id].send(worker)
+            self.global_model = self.global_model.send(
+                worker,
+                # garbage_collect_data=True  
+            )
+            self.local_models[worker.id] = self.local_models[worker.id].send(
+                worker,
+                # garbage_collect_data=True  
+            )
 
             self.global_model.eval()
             self.local_models[worker.id].eval()
@@ -1181,6 +1196,41 @@ class BaseAlgorithm(AbstractAlgorithm):
 
         return all_combined_outputs, avg_loss
 
+
+    def clear_garbage(
+        self, 
+        metas: List[str] = ["train", "evaluate", "predict"]
+    ):
+        """
+        """
+
+        ###########################
+        # Implementation Footnote #
+        ###########################
+
+        # [Causes]
+        # Remote tensors accumulate as optims, schedulers and criterions have
+        # hidden attributes that create new pointers as the autograd chain 
+        # resolves.
+
+        # [Problems]
+        # Number of pointers increases as a function of batches, . As such, 
+        # over multiple rounds and epochs, the number of remote tensors 
+        # accumulated increases significantly, causing remote object searches 
+        # to get progressive longer over time. This slows down the training
+        # process significantly!
+
+        # [Solution]
+        # Manually identify the pointer IDs from each batch pointer across all
+        # participants within the TTP, & clear all other objects that were not
+        # identified.
+
+        self.crypto_provider.clear_objects()
+
+        for _, ptr in self.crypto_objs.items():
+            self.crypto_provider.object_store.set_obj(ptr)
+
+
     ##################
     # Core Functions #
     ##################
@@ -1253,6 +1303,8 @@ class BaseAlgorithm(AbstractAlgorithm):
         Returns:
             Trained global model (Model)
         """
+        logging.warning(f"Objects in TTP: {self.crypto_provider.list_objects()}")
+
         ###########################
         # Implementation Footnote #
         ###########################
@@ -1272,6 +1324,8 @@ class BaseAlgorithm(AbstractAlgorithm):
         rounds = 0
         pbar = tqdm(total=self.arguments.rounds, desc='Rounds', leave=True)
         while rounds < self.arguments.rounds:
+
+            logging.warning(f"Before training - TTP: {self.crypto_provider}, workers: {self.workers}")
 
             (
                 local_models,
@@ -1361,6 +1415,12 @@ class BaseAlgorithm(AbstractAlgorithm):
                     ID_function=BaseAlgorithm.fit.__name__
                 )
                 break
+
+            logging.warning(f"Before GC attempt - TTP: {self.crypto_provider}, workers: {self.workers}")
+
+            self.clear_garbage(metas=["train", "evaluate"])
+
+            logging.warning(f"After GC attempt - TTP: {self.crypto_provider}, workers: {self.workers}")
 
             rounds += 1
             pbar.update(1)

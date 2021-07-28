@@ -1547,6 +1547,8 @@ class FedGKT(BaseAlgorithm):
         pbar = tqdm(total=self.arguments.rounds, desc='Rounds', leave=True)
         while rounds < self.arguments.rounds:
 
+            logging.warning(f"Before training - TTP: {self.crypto_provider}, workers: {self.workers}")
+
             (
                 local_models,
                 prev_models, 
@@ -1616,6 +1618,12 @@ class FedGKT(BaseAlgorithm):
             if global_val_stopper.early_stop:
                 logging.info("Global model has stagnated. Training round terminated!\n")
                 break
+
+            logging.warning(f"Before GC attempt - TTP: {self.crypto_provider}, workers: {self.workers}")
+
+            self.clear_garbage(metas=["train", "evaluate"])
+
+            logging.warning(f"After GC attempt - TTP: {self.crypto_provider}, workers: {self.workers}")
 
             rounds += 1
             pbar.update(1)

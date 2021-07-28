@@ -5,6 +5,7 @@
 ####################
 
 # Generic
+import logging
 import inspect
 from typing import Dict, List, Union, Callable
 
@@ -170,7 +171,7 @@ class Arguments:
     @property
     def lr_decay_params(self):
         params = self.__retrieve_args(self.lr_scheduler)
-
+        logging.warning(f"params: {params}")
          # Optimizer is dynamically loaded -> remove ambiguity
         params.pop('optimizer')
 
@@ -198,7 +199,7 @@ class Arguments:
             Argument keys (list(str))
         """
         input_params = list(inspect.signature(callable).parameters)
-
+        logging.warning(f"input_params: {input_params}")
         arguments = {}
         for param in input_params:
             param_value = getattr(self, param, None)
