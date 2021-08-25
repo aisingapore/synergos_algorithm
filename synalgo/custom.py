@@ -74,6 +74,10 @@ class CustomFederatedDataloader(FederatedDataLoader):
             try:
                 data, target = next(iterator)
                 batches[data.location] = (data, target)
+
+            except (TypeError, AttributeError) as e:
+                logging.warning(f"Dangling pointer detected! Skipping operation... Error: {e}")
+            
             except StopIteration:
                 terminations += 1
 

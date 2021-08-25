@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import re
+import time
 from collections import OrderedDict
 from logging import NOTSET
 from multiprocessing import Manager
@@ -103,11 +104,11 @@ class BaseAlgorithm(AbstractAlgorithm):
         self.workers = workers
 
         # Data attributes
-        self.crypto_objs = {k:v for k,v in self.crypto_provider._objects.items()} # cache original pointers
         self.arguments = arguments
         self.train_loader = train_loader
         self.eval_loader = eval_loader
         self.test_loader = test_loader
+        self.crypto_objs = self._detect_defaults()
         
         # Model attributes
         self.global_model = global_model
@@ -138,6 +139,26 @@ class BaseAlgorithm(AbstractAlgorithm):
     ###########    
     # Helpers #
     ###########
+
+    def _detect_defaults(self):
+        """
+        """
+        dataset_ptrs = {
+            k:v 
+            for k,v in self.crypto_provider.object_store._objects.items()
+        } # cache original full dataset pointers
+
+        # To prevent batch tensors from being accidentally cleared
+        # batch_ptrs = {}
+        # dataloaders = [self.train_loader, self.eval_loader, self.test_loader]
+        # for dataloader in dataloaders:
+        #     for batch in dataloader:
+        #         for _, (data, labels) in batch.items():
+        #             batch_ptrs[data.id_at_location] = data
+        #             batch_ptrs[labels.id_at_location] = labels
+
+        return dataset_ptrs#{**dataset_ptrs, **batch_ptrs}
+
 
     def build_custom_criterion(self):
         """ Augments a selected criterion with the ability to use FedProx
@@ -1194,13 +1215,16 @@ class BaseAlgorithm(AbstractAlgorithm):
         finally:
             loop.close()
 
+        logging.warning(f"Evaluation - Before GC attempt - TTP: {self.crypto_provider}, workers: {self.workers}")
+
+        self.clear_garbage()
+
+        logging.warning(f"Evaluation - After GC attempt - TTP: {self.crypto_provider}, workers: {self.workers}")
+
         return all_combined_outputs, avg_loss
 
 
-    def clear_garbage(
-        self, 
-        metas: List[str] = ["train", "evaluate", "predict"]
-    ):
+    def clear_garbage(self):
         """
         """
 
@@ -1225,10 +1249,72 @@ class BaseAlgorithm(AbstractAlgorithm):
         # participants within the TTP, & clear all other objects that were not
         # identified.
 
-        self.crypto_provider.clear_objects()
+        logging.warning(f"Clearing garbage - Before: {self.crypto_objs}")
 
-        for _, ptr in self.crypto_objs.items():
-            self.crypto_provider.object_store.set_obj(ptr)
+        whitelisted_ids = list(self.crypto_objs.keys())
+        logging.warning(f"Whitelisted IDs on TTP: {whitelisted_ids}, {len(whitelisted_ids)}")
+
+        curr_remote_counts = {
+            worker:worker.objects_count_remote() 
+            for worker in self.workers
+        }
+
+        all_ids = list(self.crypto_provider.object_store._objects.keys()) # ref to avoid inplace mods
+        removed_counts = {worker:0 for worker in self.workers}
+        for obj_id in all_ids:
+            if obj_id not in whitelisted_ids:
+                ptr = self.crypto_provider.object_store.find_by_id(id=obj_id)
+                location = ptr.location 
+
+                self.crypto_provider.object_store.rm_obj(obj_id=obj_id)
+
+                if location:
+                    removed_counts[location] += 1
+
+        # is_pending = True
+        # while is_pending: 
+
+        #     for worker in self.workers:
+        #         pre_removal_count = curr_remote_counts.get(worker)
+        #         removed_count = removed_counts.get(worker)
+        #         post_removal_count = worker.objects_count_remote()
+               
+        #         # Condition: Worker is still processing deletion cascade
+        #         is_pending = post_removal_count > (pre_removal_count - removed_count)
+        #         if is_pending:
+        #             logging.warning(f"Worker {worker.id} is pending deletion cascade...")
+        #             logging.warning(f"Worker {worker.id} - pre: {pre_removal_count}, removed: {removed_count}, post: {post_removal_count}")
+
+        #     time.sleep(1)
+
+        time.sleep(30)
+
+        logging.warning(f"Deletion cascade completed!")
+
+        ###########################
+        # Implementation Footnote #
+        ###########################
+
+        # [Causes]
+        # Sometimes the garbage collection cascade misses some tensors, and 
+        # leaves residuals on the workers' end.
+
+        # [Problems]
+        # This causes pointer mis-alignment, resulting in a non-deterministic
+        # occurence of "syft.exceptions.ObjectNotFoundError: Object "xxxxxxxx" 
+        # not found on worker!".  
+
+        # [Solution]
+        # Manually trigger a reset of tensors over on the worker's end as well
+
+        remote_ids = [v.id_at_location for v in self.crypto_objs.values()] 
+        for worker in self.workers:
+            worker._send_msg_and_deserialize(
+                "clear_residuals", 
+                exclusions=remote_ids
+            )
+
+        logging.warning(f"Clearing garbage - After: {self.crypto_objs}")
 
 
     ##################
@@ -1390,6 +1476,12 @@ class BaseAlgorithm(AbstractAlgorithm):
                 dim=0
             )
 
+            logging.warning(f"Training - Before GC attempt - TTP: {self.crypto_provider}, workers: {self.workers}")
+
+            self.clear_garbage()
+
+            logging.warning(f"Training - After GC attempt - TTP: {self.crypto_provider}, workers: {self.workers}")
+
             # Validate the global model
             _, evaluation_losses = self.evaluate(metas=['evaluate'])
             global_val_loss = evaluation_losses['evaluate']
@@ -1415,12 +1507,6 @@ class BaseAlgorithm(AbstractAlgorithm):
                     ID_function=BaseAlgorithm.fit.__name__
                 )
                 break
-
-            logging.warning(f"Before GC attempt - TTP: {self.crypto_provider}, workers: {self.workers}")
-
-            self.clear_garbage(metas=["train", "evaluate"])
-
-            logging.warning(f"After GC attempt - TTP: {self.crypto_provider}, workers: {self.workers}")
 
             rounds += 1
             pbar.update(1)
@@ -1502,6 +1588,12 @@ class BaseAlgorithm(AbstractAlgorithm):
                     inferences[worker_id] = worker_results
 
                 losses[meta] = avg_loss
+
+                logging.warning(f"Evaluation - Before GC attempt - TTP: {self.crypto_provider}, workers: {self.workers}")
+
+                self.clear_garbage()
+
+                logging.warning(f"Evaluation - After GC attempt - TTP: {self.crypto_provider}, workers: {self.workers}")
 
         return inferences, losses
 
