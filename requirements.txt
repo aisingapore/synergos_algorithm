@@ -13,7 +13,7 @@ scikit-optimize==0.8.1
 syft==0.2.9
 syft-proto==0.5.3
 tensorflow==1.15.5
-tensorboardX==1.2 
+tensorboardX==2.1 
 tf-encrypted==0.5.9
 torch==1.4.0
 torchvision==0.5.0
