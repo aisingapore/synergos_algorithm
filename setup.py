@@ -30,7 +30,7 @@ def read_requirements(fname):
 
 setup(
     name="synergos_algorithm",
-    version="0.2.0",
+    version="0.1.0",
     author="AI Singapore",
     author_email='synergos-ext@aisingapore.org',
     description="Algorithmic component for the Synergos network",
