@@ -2,14 +2,14 @@
 
 Algorithmic component for the Synergos network
 
-![Synergos Components](./docs/images/synergos_modules.png)*Component repositories of Synergos [V2]*
+![Synergos Components](./docs/images/synergos_modules.png)*Component repositories of Synergos [V3]*
 
 The Synergos grid prides itself on its modular system of deployment, comprizing various deployment combinations as seen from the diagram above. General configurations are as follows:
-1. **`SME`** 
+1. **`Synergos Basic`** 
     > Simplest deployment pattern, consisting a duet of 2 containers - *Synergos-TTP* & *Synergos-Worker*. 
-2. **`Monitored SME`**
+2. **`Synergos Plus`**
     > Intermediate deployment pattern that equips the grid with the capability to for metadata extraction/analysis. This allows users to gain access to hardware statistics, data-cataloguing, lineage tracking and general centrialised logging.
-3. **`SynCluster`**
+3. **`Synergos Cluster`**
     > Full distributed deployment pattern with job queue integration in addition to metadata extraction. This configuration is optimized for running concurrent federated cycles to facilitate hyperparameter tuning.
 
 By having users install different components depending on their supposed role within the federated grid, most of the complexity associated with federated orchestrations are obscured completely from the users. Specifically, the goal is to stitch entire containers together with unique Dockerfile configurations.
