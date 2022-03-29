@@ -64,7 +64,7 @@ class FedAvg(BaseAlgorithm):
         # For custom criterion to behave like the vanilla fedavg, the 
         # coefficient mu MUST be 0 (i.e. No FedProx effect)
         # enter logging statement:  initialize fedavg algo 
-        assert self.arguments.mu == 0.0
+        assert arguments.mu == 0.0
 
         super().__init__(
             action=action,
